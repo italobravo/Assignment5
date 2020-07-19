@@ -1,0 +1,340 @@
+//    “eCar” is an emulator to illustrate the usage of state machines witten in Umple and Java.
+//    Presented as assignment 5 of the course SEG2105*[Z] Intro To Software Engineering 20205
+//    Copyright (C) 2020  Italo Bravo
+
+//    This program is free software: you can redistribute it and/or modify
+//    it under the terms of the GNU General Public License as published by
+//    the Free Software Foundation, either version 3 of the License, or
+//    any later version.
+
+//    This program is distributed in the hope that it will be useful,
+//    but WITHOUT ANY WARRANTY; without even the implied warranty of
+//    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//    GNU General Public License for more details.
+
+//    You should have received a copy of the GNU General Public License
+//    along with this program.  If not, see <
+
+// This example illustrates a simple simulation of a Electric car (Version 1 with basic functions)
+// Author: Italo Bravo
+// The simulation accepts input of a cycle to run, and also c to cancel and q to quit
+// The commands do and dc can also be used to simulate door opening and closing
+// These inputs are converted into methods that trigger events on state machines
+// There are two state machines:
+// core operates the cycles
+// timingSm runs a timer that updates the display
+// Note that the main program and the two state machines operate in separate threads.
+
+class Car 
+{
+  depend java.time.LocalTime;
+  // This will be used to display the time remaining and track that time
+  // In a real system, this would be in minutes, but it will be seconds in this simulation
+  Integer minutesRemaining = 0;
+  
+  // Time in cycle segments we are not timing yet
+  Integer subsequentTime = 0;
+  
+  // Fixed times for various tasks
+  
+  Integer cookTime=10;
+  double powerLvl = 1.0;
+  boolean driving = false;
+  double temp = 300;
+  Integer currentSpeed = 0;
+  
+  
+  // This will be set if a timed operation needs to not count down, e.g. when the door is open
+  Boolean RdoorOpen = false;
+   Boolean LdoorOpen = false;
+  
+  queued RdoorSm 
+  {
+    closed 
+    { 
+      openDoorR [!driving] / {
+        display("Cars right door has been opened");
+        RdoorOpen = true; 
+      } -> open;
+      closeDoorR [!driving]/ {display("Right door already closed");}-> closed;
+      openDoorR [driving]/ {display("cannot open door while driving");} -> closed;
+      closeDoorR [driving]/ {display("Right door already closed");}-> closed;
+    }
+    open 
+    {
+      closeDoorR / {display("Right door closed");}-> closed;
+      openDoorR / {display("Right door already opened");RdoorOpen = false;} -> open;
+    }
+  }
+   queued LdoorSm
+   {
+    closed 
+    {
+      openDoorL [!driving] / {display("Left door opened"); LdoorOpen = true;} -> open;
+      closeDoorL [!driving]/ {display("Left door already closed");}-> closed;
+      openDoorL [driving] / {display("cannot open door while driving");} -> closed;
+      closeDoorL [driving]/ {display("Left door already closed"); LdoorOpen =false;}-> closed;
+    }
+    open 
+    {
+      closeDoorL / {display("Left door closed");}-> closed;
+      openDoorL / {display("Left door already opened");} -> open;
+    }
+  }
+ 
+  // state machine that represents the current states of the cars windows
+    queued RwindowSm
+    {
+    closed 
+    {
+      toggleOpenR / {display("Right windows opened");} -> open;
+      toggleCloseR/ {display("Right windows already closed");}-> closed;
+    }
+    open
+    {
+      toggleCloseR / {display("Right windows closed");}-> closed;
+      toggleOpenR / {display("Right windows already opened");} -> open;
+    }
+  }
+  queued LwindowSm 
+  {
+    closed 
+    {
+      toggleOpenL / {display("Left windows opened");} -> open;
+      toggleCloseL / {display("Left windows already closed");}-> closed;
+    }
+    open 
+    {
+      toggleCloseL / {display("Left windows closed");}-> closed;
+      toggleOpenL / {display("Left windows already opened");} -> open;
+    }
+  }
+  queued airConditioningSm 
+  {
+    off 
+    {
+      toggleAC / {display("ac disengaged");} -> on;
+    }
+    on
+    {
+      toggleAC / {display("ac engaged");}-> off;     
+    }
+  }
+  
+  queued powerSm
+  { // change to eco and performance
+    performance 
+    {
+      change / {display("power set to low");powerLvl = 0.5;} -> eco;
+    }
+    eco 
+    {
+      change / {display("power set to high");powerLvl = 1.0;}-> performance;
+    }
+  }
+
+  // Central state machine for system state
+  queued core 
+  {
+    idle 
+    {
+      // in this state the oven can accept a command to set cooking
+      entry / {display("Enter command (tk, a, b, cr, c, wo, wc)"); driving = false;}
+      turnKey / {}-> active;
+    }
+    
+    active 
+    {      
+      entry / {display("car on");}
+      cancel / {display("CANCELLING");startTimer(1,0);} -> idle;
+      brake / {} -> braking;
+      cruise / {} -> cruising;
+      accelerate  / {} ->accelarating;   
+        
+      cruising 
+      {
+        entry / {display("car cruising at " + currentSpeed);}
+      }
+      // set to loop to itself if uninterrupted and increase speed in each instance made
+      accelarating 
+      {
+        entry / {int i = currentSpeed+1; display("car accelerating: "+ currentSpeed+" -> "+ i ); driving = true; currentSpeed=currentSpeed+1;}
+         after(2) -> accelarating;
+      }
+      // reverse accelearation if speed isn't zero
+      braking 
+      {
+        entry / {int j = currentSpeed-1;display("car braking: "+ currentSpeed+" -> "+ j );
+                 if(j<1)
+                 {
+                   driving = false;
+                   currentSpeed = 0;
+                   cruise();
+                 }
+                 else
+                 {
+                    currentSpeed=currentSpeed-1;
+                 }
+                }
+         after(2) -> braking;
+      }    
+    }
+  }
+  queued timingSm
+  {
+    idle 
+    {
+      startTimer(int numMins, int subsequentMins) -> countingDown;
+    }
+    countingDown 
+    {
+      startTimer(int numMins, int subsequentMins) -> countingDown;
+      
+      after(1.0) [minutesRemaining >= 1]  / { displayTime();minutesRemaining--;} -> countingDown;
+      
+      after(1.0) [minutesRemaining <= 0] -> idle;
+      
+      openDoor -> idle;   
+      
+    }
+  }  
+  before startTimer 
+  {
+    minutesRemaining = numMins;
+     // subsequentTime = subsequentMins;
+  }  
+  void display(String s) 
+  {
+    System.out.println(java.time.LocalTime.now() +" " + s);
+  }  
+  
+   void displayTime() {
+    System.out.println("DISPLAY: "+(minutesRemaining));
+  } 
+  // ro,mo, c, q, p, dc, do, ac
+  public static void main(String[] argv)
+  {
+    Boolean doorOpen = false;  
+    System.out.println("Car.  Copyright (C) 2020 Italo Bravo");
+    System.out.println("This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.");
+    System.out.println("This is free software, and you are welcome to redistribute it");
+    System.out.println("under certain conditions; type `show c' for details.");
+    System.out.println("");
+    Car c = new Car();
+    Scanner s = new Scanner(System.in);
+    String command;
+    while(true)
+    {      
+      command = s.nextLine();
+      switch(command)
+      {
+       case "q": System.exit(0);
+        case "ac":
+          c.toggleAC();
+          break; 
+        
+        case "tk":
+          c.turnKey();
+          break;
+        
+        case "a":
+        if(!doorOpen)
+        {
+          c.accelerate();
+        }
+        else 
+        {
+          System.out.println("Car cannot accelerate while the door is open");
+        }
+          break; 
+        
+         case "b":
+          c.brake();
+          break; 
+        
+        case "c":
+          c.cancel();
+          break;
+        
+         case "cr":
+          c.cruise();
+          break;
+        
+        case "dcr":
+          c.closeDoorR();
+          doorOpen = false;
+          break;
+        
+        case "dor":
+          c.openDoorR();
+          doorOpen =  true;
+          break;
+        
+        case "dcl":
+          c.closeDoorL();
+          doorOpen = false;
+          break;
+        
+        case "dol":
+          c.openDoorL();
+          doorOpen = true;
+          break; 
+        
+        case "wor":
+          c.toggleOpenR();
+          break;    
+        
+        case "wcr":
+          c.toggleCloseR();
+          break;
+        
+        case "wol":
+          c.toggleOpenL();         
+          break;
+        
+        case "wcl":
+          c.toggleCloseL();
+          break;
+        
+        case "show w":
+          System.out.println(" THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY");
+          System.out.println("APPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT");
+          System.out.println("HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM 'AS IS' WITHOUT WARRANTY");
+          System.out.println("OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,");
+          System.out.println("THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR");
+          System.out.println("PURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM");
+          System.out.println("IS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF");
+          System.out.println("ALL NECESSARY SERVICING, REPAIR OR CORRECTION.");
+          break; 
+        
+        case "show c":
+          System.out.println("All rights granted under this License are granted for the term of");
+          System.out.println("copyright on the Program, and are irrevocable provided the stated");
+          System.out.println("conditions are met.  This License explicitly affirms your unlimited");
+          System.out.println("permission to run the unmodified Program.  The output from running a");
+          System.out.println("covered work is covered by this License only if the output, given its");
+          System.out.println("content, constitutes a covered work.  This License acknowledges your");
+          System.out.println("rights of fair use or other equivalent, as provided by copyright law.");
+          System.out.println("");
+          System.out.println("You may make, run and propagate covered works that you do not");
+          System.out.println("convey, without conditions so long as your license otherwise remains");
+          System.out.println("in force.  You may convey covered works to others for the sole purpose");
+          System.out.println("of having them make modifications exclusively for you, or provide you");
+          System.out.println("with facilities for running those works, provided that you comply with");
+          System.out.println("the terms of this License in conveying all material for which you do");
+          System.out.println("not control copyright.  Those thus making or running the covered works");
+          System.out.println("for you must do so exclusively on your behalf, under your direction");
+          System.out.println("and control, on terms that prohibit them from making any copies of");
+          System.out.println("your copyrighted material outside their relationship with you.");
+          break;
+        
+        default:
+        
+        break;
+      }
+    }
+  }
+}
+}
+
+    
