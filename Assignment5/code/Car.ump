@@ -154,7 +154,7 @@ class Car
     idle 
     {
       // in this state the oven can accept a command to set cooking
-      entry / {display("Enter command (tk, a, b, cr, c, wo, wc)"); driving = false;}
+      entry / {display("Enter command: q, ac, tk, a, b, c,  cr, dcr, dor, dcl, dol, wor,  wcr, wol, wcl, show w, show c)");  driving = false;}
       turnKey / {}-> active;
     }
     
@@ -345,6 +345,9 @@ class Car
           break;
         
         default:
+        System.out.println("");
+           System.out.println("COMMAND NOT RECOGNIZED");        
+           System.out.println("");
         
         break;
       }
